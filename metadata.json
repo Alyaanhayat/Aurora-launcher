@@ -1,0 +1,6 @@
+{
+  "name": "Aurora Launcher",
+  "description": "Fluid Material You Android launcher with customizable icon packs, minimalist dark mode, multiple app drawer layouts, deep productivity widgets, and smart search.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
