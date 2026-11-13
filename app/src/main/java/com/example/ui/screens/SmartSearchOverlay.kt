@@ -71,6 +71,7 @@ import androidx.compose.ui.unit.sp
 import com.example.model.AppCategory
 import com.example.model.AppItem
 import com.example.model.IconPackStyle
+import com.example.model.IconShape
 import com.example.model.IconSize
 import com.example.ui.components.AppIconGraphic
 import com.example.ui.components.getIconShape
@@ -80,6 +81,7 @@ import com.example.ui.components.getIconShape
 fun SmartSearchOverlay(
     apps: List<AppItem>,
     iconPackStyle: IconPackStyle,
+    iconShape: IconShape = IconShape.SQUIRCLE,
     onAppClick: (AppItem) -> Unit,
     onAppLongClick: (AppItem) -> Unit,
     onDismiss: () -> Unit
@@ -355,7 +357,7 @@ fun SmartSearchOverlay(
                                 app = app,
                                 style = iconPackStyle,
                                 size = 42.dp,
-                                shape = getIconShape(iconPackStyle),
+                                shape = getIconShape(iconPackStyle, iconShape),
                                 context = context
                             )
                             Spacer(modifier = Modifier.width(16.dp))

@@ -90,7 +90,7 @@ fun AtAGlanceWidget(
             .clickable(onClick = onClockClick)
             .testTag("at_a_glance_widget"),
         colors = CardDefaults.cardColors(
-            containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f)
+            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.78f)
         ),
         shape = RoundedCornerShape(28.dp)
     ) {

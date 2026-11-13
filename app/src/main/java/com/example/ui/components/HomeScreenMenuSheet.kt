@@ -1,5 +1,6 @@
 package com.example.ui.components
 
+import android.content.Intent
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -23,7 +24,9 @@ import androidx.compose.material.icons.filled.Delete
 import androidx.compose.material.icons.filled.NoteAdd
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material.icons.filled.Wallpaper
 import androidx.compose.material.icons.filled.Widgets
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -45,6 +48,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -64,8 +68,16 @@ fun HomeScreenMenuSheet(
     onCycleWallpaper: () -> Unit,
     onToggleWidget: (String, Boolean) -> Unit
 ) {
+    val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var showWidgetPicker by remember { mutableStateOf(false) }
+    val wallpaperLabel = when (preferences.wallpaperThemeIndex) {
+        0 -> "Android System"
+        1 -> "Cosmic Sky"
+        2 -> "Velvet Lavender"
+        3 -> "Emerald Mist"
+        else -> "Minimal Pure"
+    }
 
     ModalBottomSheet(
         onDismissRequest = onDismiss,
@@ -171,14 +183,41 @@ fun HomeScreenMenuSheet(
                 MenuActionCard(
                     icon = Icons.Default.ColorLens,
                     title = "Wallpaper",
-                    subtitle = "Switch gradient",
-                    isHighlight = false,
+                    subtitle = wallpaperLabel,
+                    isHighlight = preferences.wallpaperThemeIndex == 0,
                     onClick = {
                         onCycleWallpaper()
                     },
                     modifier = Modifier.weight(1f),
                     tag = "menu_wallpaper_btn"
                 )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            OutlinedButton(
+                onClick = {
+                    runCatching {
+                        val intent = Intent.createChooser(
+                            Intent(Intent.ACTION_SET_WALLPAPER),
+                            "Choose Android Wallpaper"
+                        )
+                        context.startActivity(intent)
+                    }
+                    onDismiss()
+                },
+                shape = RoundedCornerShape(14.dp),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("menu_system_wallpaper_picker_btn")
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Wallpaper,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp)
+                )
+                Spacer(modifier = Modifier.width(8.dp))
+                Text("Change Android System Wallpaper")
             }
 
             // Remove current page option if extra page exists

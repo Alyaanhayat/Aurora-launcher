@@ -21,13 +21,21 @@ enum class ColorPaletteSeed(
     MINIMAL_MONO("Monochrome Minimal", 0xFF374151, 0xFF4B5563, 0xFF6B7280)
 }
 
+enum class IconShape(val label: String) {
+    SQUIRCLE("Squircle"),
+    CIRCLE("Circle"),
+    FLOWER("Flower"),
+    STAR("Star")
+}
+
 enum class IconPackStyle(val label: String, val description: String) {
     MATERIAL_YOU_THEMED("Material You Themed", "Monochrome glyphs tinted with active dynamic palette"),
     MINIMAL_OUTLINE("Minimalist Outline", "Clean thin outlines, distraction-free"),
     VIBRANT_MATERIAL("Vibrant Material 3", "Vivid modern shapes with rich elevation"),
     CLASSIC_ROUND("Classic Round", "Smooth circular icons"),
     SQUIRCLE("Modern Squircle", "Gentle continuous curved squircle"),
-    PEBBLE("Organic Pebble", "Asymmetric modern pebble shape")
+    PEBBLE("Organic Pebble", "Asymmetric modern pebble shape"),
+    IMPORTED_CUSTOM("Imported Icon Pack", "Custom icon pack imported from your files")
 }
 
 enum class IconSize(val label: String, val dpValue: Int) {
@@ -57,12 +65,16 @@ enum class HomeScreenWidget(val id: String, val title: String, val subtitle: Str
 data class LauncherPreferences(
     val themeMode: ThemeMode = ThemeMode.MINIMAL_DARK,
     val colorPaletteSeed: ColorPaletteSeed = ColorPaletteSeed.LAVENDER,
+    val iconShape: IconShape = IconShape.SQUIRCLE,
     val iconPackStyle: IconPackStyle = IconPackStyle.MATERIAL_YOU_THEMED,
     val iconSize: IconSize = IconSize.STANDARD,
     val showAppLabels: Boolean = true,
     val drawerLayoutMode: DrawerLayoutMode = DrawerLayoutMode.GRID_4,
     val dockAppCount: Int = 5,
     val autoLaunchSingleMatch: Boolean = false,
+    val enableSmartSearch: Boolean = true,
+    val enableProductivityShelf: Boolean = true,
+    val allowThirdPartyWidgets: Boolean = true,
     val wallpaperThemeIndex: Int = 0,
     val homePageCount: Int = 1,
     val enabledWidgets: Set<String> = setOf(

@@ -79,6 +79,7 @@ import com.example.model.AppFolder
 import com.example.model.AppItem
 import com.example.model.DrawerLayoutMode
 import com.example.model.IconPackStyle
+import com.example.model.IconShape
 import com.example.model.IconSize
 import com.example.ui.components.AlphabetScrubber
 import com.example.ui.components.AppFolderView
@@ -96,6 +97,7 @@ fun AppDrawerSheet(
     drawerLayoutMode: DrawerLayoutMode,
     iconPackStyle: IconPackStyle,
     iconSize: IconSize,
+    iconShape: IconShape = IconShape.SQUIRCLE,
     showAppLabels: Boolean,
     onAppClick: (AppItem) -> Unit,
     onAppLongClick: (AppItem) -> Unit,
@@ -333,6 +335,7 @@ fun AppDrawerSheet(
                                     app = app,
                                     iconPackStyle = iconPackStyle,
                                     iconSize = if (cols == 5) IconSize.COMPACT else iconSize,
+                                    iconShape = iconShape,
                                     showLabel = showAppLabels,
                                     onClick = { onAppClick(app) },
                                     onLongClick = { onAppLongClick(app) }
@@ -370,7 +373,7 @@ fun AppDrawerSheet(
                                             app = app,
                                             style = iconPackStyle,
                                             size = 40.dp,
-                                            shape = getIconShape(iconPackStyle),
+                                            shape = getIconShape(iconPackStyle, iconShape),
                                             context = LocalContext.current
                                         )
                                         Spacer(modifier = Modifier.width(16.dp))
@@ -409,6 +412,7 @@ fun AppDrawerSheet(
                                     app = app,
                                     iconPackStyle = iconPackStyle,
                                     iconSize = iconSize,
+                                    iconShape = iconShape,
                                     showLabel = showAppLabels,
                                     onClick = { onAppClick(app) },
                                     onLongClick = { onAppLongClick(app) }

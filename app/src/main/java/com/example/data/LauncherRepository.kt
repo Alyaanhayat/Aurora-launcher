@@ -13,6 +13,7 @@ import com.example.model.ColorPaletteSeed
 import com.example.model.DrawerLayoutMode
 import com.example.model.HabitItem
 import com.example.model.IconPackStyle
+import com.example.model.IconShape
 import com.example.model.IconSize
 import com.example.model.LauncherPreferences
 import com.example.model.NoteItem
@@ -41,6 +42,12 @@ class LauncherRepository(
     private val _folders = MutableStateFlow(loadFolders())
     val allFolders: Flow<List<AppFolder>> = _folders.asStateFlow()
 
+    private val _dockPackages = MutableStateFlow(loadDockPackages())
+    val dockPackages: Flow<List<String>> = _dockPackages.asStateFlow()
+
+    private val _homePages = MutableStateFlow(loadHomePages())
+    val homePages: Flow<Map<Int, List<String>>> = _homePages.asStateFlow()
+
     val allNotes: Flow<List<NoteItem>> = dao.getAllNotes()
     val allTasks: Flow<List<TaskItem>> = dao.getAllTasks()
     val allHabits: Flow<List<HabitItem>> = dao.getAllHabits()
@@ -49,11 +56,15 @@ class LauncherRepository(
     private fun loadPreferences(): LauncherPreferences {
         val themeStr = prefs.getString("theme_mode", ThemeMode.MINIMAL_DARK.name)
         val paletteStr = prefs.getString("color_palette", ColorPaletteSeed.LAVENDER.name)
+        val iconShapeStr = prefs.getString("icon_shape", IconShape.SQUIRCLE.name)
         val iconPackStr = prefs.getString("icon_pack", IconPackStyle.MATERIAL_YOU_THEMED.name)
         val iconSizeStr = prefs.getString("icon_size", IconSize.STANDARD.name)
         val drawerModeStr = prefs.getString("drawer_mode", DrawerLayoutMode.GRID_4.name)
         val showLabels = prefs.getBoolean("show_labels", true)
         val autoLaunch = prefs.getBoolean("auto_launch_single", false)
+        val enableSearch = prefs.getBoolean("enable_smart_search", true)
+        val enableShelf = prefs.getBoolean("enable_productivity_shelf", true)
+        val allowThirdPartyWidgets = prefs.getBoolean("allow_third_party_widgets", true)
         val dockCount = prefs.getInt("dock_count", 5)
         val wallpaperIdx = prefs.getInt("wallpaper_idx", 0)
         val pageCount = prefs.getInt("home_page_count", 1)
@@ -64,11 +75,15 @@ class LauncherRepository(
         return LauncherPreferences(
             themeMode = runCatching { ThemeMode.valueOf(themeStr ?: "") }.getOrDefault(ThemeMode.MINIMAL_DARK),
             colorPaletteSeed = runCatching { ColorPaletteSeed.valueOf(paletteStr ?: "") }.getOrDefault(ColorPaletteSeed.LAVENDER),
+            iconShape = runCatching { IconShape.valueOf(iconShapeStr ?: "") }.getOrDefault(IconShape.SQUIRCLE),
             iconPackStyle = runCatching { IconPackStyle.valueOf(iconPackStr ?: "") }.getOrDefault(IconPackStyle.MATERIAL_YOU_THEMED),
             iconSize = runCatching { IconSize.valueOf(iconSizeStr ?: "") }.getOrDefault(IconSize.STANDARD),
             drawerLayoutMode = runCatching { DrawerLayoutMode.valueOf(drawerModeStr ?: "") }.getOrDefault(DrawerLayoutMode.GRID_4),
             showAppLabels = showLabels,
             autoLaunchSingleMatch = autoLaunch,
+            enableSmartSearch = enableSearch,
+            enableProductivityShelf = enableShelf,
+            allowThirdPartyWidgets = allowThirdPartyWidgets,
             dockAppCount = dockCount,
             wallpaperThemeIndex = wallpaperIdx,
             homePageCount = pageCount.coerceIn(1, 5),
@@ -82,11 +97,15 @@ class LauncherRepository(
         prefs.edit().apply {
             putString("theme_mode", newPrefs.themeMode.name)
             putString("color_palette", newPrefs.colorPaletteSeed.name)
+            putString("icon_shape", newPrefs.iconShape.name)
             putString("icon_pack", newPrefs.iconPackStyle.name)
             putString("icon_size", newPrefs.iconSize.name)
             putString("drawer_mode", newPrefs.drawerLayoutMode.name)
             putBoolean("show_labels", newPrefs.showAppLabels)
             putBoolean("auto_launch_single", newPrefs.autoLaunchSingleMatch)
+            putBoolean("enable_smart_search", newPrefs.enableSmartSearch)
+            putBoolean("enable_productivity_shelf", newPrefs.enableProductivityShelf)
+            putBoolean("allow_third_party_widgets", newPrefs.allowThirdPartyWidgets)
             putInt("dock_count", newPrefs.dockAppCount)
             putInt("wallpaper_idx", newPrefs.wallpaperThemeIndex)
             putInt("home_page_count", newPrefs.homePageCount)
@@ -151,7 +170,9 @@ class LauncherRepository(
             scannedApps + auroraSettingsApp
         }
 
-        finalApps.sortedBy { it.label.lowercase() }
+        val sortedApps = finalApps.sortedBy { it.label.lowercase() }
+        initializeHomeAndDockIfNeeded(sortedApps)
+        sortedApps
     }
 
     private fun guessCategory(label: String, pkg: String): AppCategory {
@@ -444,6 +465,10 @@ class LauncherRepository(
     suspend fun setAppHidden(packageName: String, isHidden: Boolean) {
         val current = dao.getCustomization(packageName) ?: AppCustomization(packageName)
         dao.saveCustomization(current.copy(isHidden = isHidden))
+        if (isHidden) {
+            removeAppFromDock(packageName)
+            removeAppFromAllHomePages(packageName)
+        }
     }
 
     suspend fun setAppFavorite(packageName: String, isFavorite: Boolean) {
@@ -454,6 +479,11 @@ class LauncherRepository(
     suspend fun setAppDocked(packageName: String, isDocked: Boolean) {
         val current = dao.getCustomization(packageName) ?: AppCustomization(packageName)
         dao.saveCustomization(current.copy(isDocked = isDocked))
+        if (isDocked) {
+            addAppToDock(packageName)
+        } else {
+            removeAppFromDock(packageName)
+        }
     }
 
     suspend fun recordAppLaunch(packageName: String) {
@@ -596,5 +626,187 @@ class LauncherRepository(
     fun verifyVaultPassword(password: String): Boolean {
         val saved = prefs.getString("vault_password_hash", null) ?: return false
         return saved == password.trim()
+    }
+
+    // Home Screen & Dock Persisted Layout Management
+    private fun loadDockPackages(): List<String> {
+        val jsonStr = prefs.getString("dock_packages_json", null) ?: return emptyList()
+        return try {
+            val arr = JSONArray(jsonStr)
+            List(arr.length()) { i -> arr.getString(i) }
+        } catch (e: Exception) {
+            emptyList()
+        }
+    }
+
+    private fun saveDockPackages(packages: List<String>) {
+        val clean = packages.distinct().take(5)
+        _dockPackages.value = clean
+        val arr = JSONArray()
+        clean.forEach { arr.put(it) }
+        prefs.edit().putString("dock_packages_json", arr.toString()).apply()
+    }
+
+    private fun loadHomePages(): Map<Int, List<String>> {
+        val jsonStr = prefs.getString("home_pages_json", null) ?: return emptyMap()
+        return try {
+            val obj = JSONObject(jsonStr)
+            val result = mutableMapOf<Int, List<String>>()
+            val keys = obj.keys()
+            while (keys.hasNext()) {
+                val k = keys.next()
+                val pageIdx = k.toIntOrNull() ?: continue
+                val arr = obj.getJSONArray(k)
+                result[pageIdx] = List(arr.length()) { i -> arr.getString(i) }
+            }
+            result
+        } catch (e: Exception) {
+            emptyMap()
+        }
+    }
+
+    private fun saveHomePages(pages: Map<Int, List<String>>) {
+        _homePages.value = pages
+        val obj = JSONObject()
+        pages.forEach { (page, pkgs) ->
+            val arr = JSONArray()
+            pkgs.distinct().forEach { arr.put(it) }
+            obj.put(page.toString(), arr)
+        }
+        prefs.edit().putString("home_pages_json", obj.toString()).apply()
+    }
+
+    private fun initializeHomeAndDockIfNeeded(installedApps: List<AppItem>) {
+        if (!prefs.contains("dock_packages_json")) {
+            val preferredDock = installedApps
+                .filter { it.packageName != "com.aurora.launcher.settings" }
+                .sortedByDescending { app ->
+                    val name = "${app.label} ${app.packageName}".lowercase()
+                    when {
+                        "dialer" in name || "phone" in name -> 5
+                        "messaging" in name || "sms" in name || "messages" in name -> 4
+                        "chrome" in name || "browser" in name -> 3
+                        "camera" in name -> 2
+                        "photos" in name || "gallery" in name -> 1
+                        else -> 0
+                    }
+                }
+                .take(4)
+                .map { it.packageName }
+            saveDockPackages(preferredDock)
+        }
+
+        if (!prefs.contains("home_pages_json")) {
+            val dockSet = _dockPackages.value.toSet()
+            val settingsPkg = installedApps.firstOrNull { it.packageName == "com.aurora.launcher.settings" }
+            val others = installedApps
+                .filter { it.packageName !in dockSet && it.packageName != "com.aurora.launcher.settings" }
+                .take(7)
+            val page0 = (listOfNotNull(settingsPkg) + others).map { it.packageName }
+            saveHomePages(mapOf(0 to page0))
+        }
+    }
+
+    fun addAppToDock(packageName: String, index: Int? = null) {
+        val current = _dockPackages.value.toMutableList()
+        current.remove(packageName)
+        if (current.size >= 5) {
+            // Keep max 5
+            current.removeAt(current.lastIndex)
+        }
+        val insertIdx = (index ?: current.size).coerceIn(0, current.size)
+        current.add(insertIdx, packageName)
+        saveDockPackages(current)
+    }
+
+    fun removeAppFromDock(packageName: String) {
+        val current = _dockPackages.value.toMutableList()
+        if (current.remove(packageName)) {
+            saveDockPackages(current)
+        }
+    }
+
+    fun moveAppWithinDock(packageName: String, toIndex: Int) {
+        val current = _dockPackages.value.toMutableList()
+        val oldIdx = current.indexOf(packageName)
+        if (oldIdx < 0) return
+        current.removeAt(oldIdx)
+        val clamped = toIndex.coerceIn(0, current.size)
+        current.add(clamped, packageName)
+        saveDockPackages(current)
+    }
+
+    fun addAppToHomePage(page: Int, packageName: String, index: Int? = null) {
+        val pages = _homePages.value.toMutableMap()
+        val list = (pages[page] ?: emptyList()).toMutableList()
+        list.remove(packageName)
+        val clamped = (index ?: list.size).coerceIn(0, list.size)
+        list.add(clamped, packageName)
+        pages[page] = list
+        saveHomePages(pages)
+    }
+
+    fun removeAppFromHomePage(page: Int, packageName: String) {
+        val pages = _homePages.value.toMutableMap()
+        val list = (pages[page] ?: return).toMutableList()
+        if (list.remove(packageName)) {
+            pages[page] = list
+            saveHomePages(pages)
+        }
+    }
+
+    private fun removeAppFromAllHomePages(packageName: String) {
+        val pages = _homePages.value.mapValues { (_, list) -> list.filter { it != packageName } }
+        saveHomePages(pages)
+    }
+
+    fun moveAppWithinHomePage(page: Int, packageName: String, toIndex: Int) {
+        val pages = _homePages.value.toMutableMap()
+        val list = (pages[page] ?: return).toMutableList()
+        val oldIdx = list.indexOf(packageName)
+        if (oldIdx < 0) return
+        list.removeAt(oldIdx)
+        val clamped = toIndex.coerceIn(0, list.size)
+        list.add(clamped, packageName)
+        pages[page] = list
+        saveHomePages(pages)
+    }
+
+    fun moveAppHomeToDock(page: Int, packageName: String, dockIndex: Int) {
+        val dock = _dockPackages.value.toMutableList()
+        if (packageName in dock) {
+            moveAppWithinDock(packageName, dockIndex)
+            return
+        }
+
+        val pages = _homePages.value.toMutableMap()
+        val pageList = (pages[page] ?: emptyList()).toMutableList()
+        val oldPageIdx = pageList.indexOf(packageName)
+        if (oldPageIdx >= 0) {
+            pageList.removeAt(oldPageIdx)
+        }
+
+        if (dock.size >= 5) {
+            // Swap with target dock slot so nothing is lost
+            val swapIdx = dockIndex.coerceIn(0, dock.lastIndex)
+            val displaced = dock.removeAt(swapIdx)
+            dock.add(swapIdx, packageName)
+            val insertBackIdx = if (oldPageIdx >= 0) oldPageIdx.coerceIn(0, pageList.size) else pageList.size
+            pageList.add(insertBackIdx, displaced)
+        } else {
+            val insertIdx = dockIndex.coerceIn(0, dock.size)
+            dock.add(insertIdx, packageName)
+        }
+
+        pages[page] = pageList
+        saveDockPackages(dock)
+        saveHomePages(pages)
+    }
+
+    fun moveAppDockToHome(packageName: String, page: Int, homeIndex: Int?) {
+        val dock = _dockPackages.value.toMutableList()
+        dock.remove(packageName)
+        saveDockPackages(dock)
+        addAppToHomePage(page, packageName, homeIndex)
     }
 }

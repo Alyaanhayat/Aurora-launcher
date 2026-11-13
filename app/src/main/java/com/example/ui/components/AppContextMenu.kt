@@ -20,6 +20,7 @@ import androidx.compose.material.icons.filled.BookmarkBorder
 import androidx.compose.material.icons.filled.CreateNewFolder
 import androidx.compose.material.icons.filled.Edit
 import androidx.compose.material.icons.filled.Folder
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.PushPin
 import androidx.compose.material.icons.filled.VisibilityOff
@@ -52,14 +53,18 @@ import androidx.compose.ui.unit.sp
 import com.example.model.AppFolder
 import com.example.model.AppItem
 import com.example.model.IconPackStyle
+import com.example.model.IconShape
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun AppContextMenu(
     app: AppItem,
     iconPackStyle: IconPackStyle,
+    iconShape: IconShape = IconShape.SQUIRCLE,
     folders: List<AppFolder> = emptyList(),
+    isOnHomeScreen: Boolean = false,
     onDismiss: () -> Unit,
+    onToggleHomeScreen: () -> Unit = {},
     onToggleDock: (Boolean) -> Unit,
     onToggleFavorite: (Boolean) -> Unit,
     onRename: (String?) -> Unit,
@@ -95,7 +100,7 @@ fun AppContextMenu(
                     app = app,
                     style = iconPackStyle,
                     size = 48.dp,
-                    shape = getIconShape(iconPackStyle),
+                    shape = getIconShape(iconPackStyle, iconShape),
                     context = LocalContext.current
                 )
                 Spacer(modifier = Modifier.width(16.dp))
@@ -117,6 +122,17 @@ fun AppContextMenu(
             Spacer(modifier = Modifier.height(16.dp))
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant)
             Spacer(modifier = Modifier.height(8.dp))
+
+            // Action: Add/Remove from Home Screen
+            ContextMenuActionRow(
+                icon = Icons.Default.Home,
+                title = if (isOnHomeScreen) "Remove from Home Screen" else "Add to Home Screen",
+                subtitle = if (isOnHomeScreen) "Remove shortcut from your home grid" else "Place app shortcut on your home screen",
+                onClick = {
+                    onToggleHomeScreen()
+                    onDismiss()
+                }
+            )
 
             // Action: Add to Folder
             ContextMenuActionRow(

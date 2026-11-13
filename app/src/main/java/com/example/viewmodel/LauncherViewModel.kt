@@ -13,9 +13,12 @@ import com.example.model.AppFolder
 import com.example.model.AppItem
 import com.example.model.DrawerLayoutMode
 import com.example.model.HabitItem
+import com.example.model.IconPackStyle
 import com.example.model.LauncherPreferences
 import com.example.model.NoteItem
 import com.example.model.TaskItem
+import com.example.util.IconPackManager
+import com.example.util.ImportedIconPackState
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -38,6 +41,7 @@ data class LauncherUiState(
 class LauncherViewModel(application: Application) : AndroidViewModel(application) {
     private val database = AppDatabase.getDatabase(application, viewModelScope)
     private val repository = LauncherRepository(application, database.launcherDao())
+    private val iconPackManager = IconPackManager(application)
 
     private val _uiState = MutableStateFlow(
         LauncherUiState(
@@ -45,6 +49,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         )
     )
     val uiState: StateFlow<LauncherUiState> = _uiState.asStateFlow()
+
+    val importedIconPack: StateFlow<ImportedIconPackState> = iconPackManager.state
+
+    private val _isImportingIconPack = MutableStateFlow(false)
+    val isImportingIconPack: StateFlow<Boolean> = _isImportingIconPack.asStateFlow()
 
     private val _rawApps = MutableStateFlow<List<AppItem>>(emptyList())
 
@@ -85,8 +94,9 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     )
 
     // Merged apps with customizations
-    val allApps: StateFlow<List<AppItem>> = combine(_rawApps, customizations) { raw, customList ->
+    val allApps: StateFlow<List<AppItem>> = combine(_rawApps, customizations, repository.dockPackages) { raw, customList, dockPkgs ->
         val customMap = customList.associateBy { it.packageName }
+        val dockSet = dockPkgs.toSet()
         raw.map { app ->
             val custom = customMap[app.packageName]
             if (custom != null) {
@@ -94,18 +104,36 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                     customLabel = custom.customLabel,
                     isHidden = custom.isHidden,
                     isFavorite = custom.isFavorite,
-                    isDocked = custom.isDocked || app.isDocked,
+                    isDocked = app.packageName in dockSet,
                     launchCount = custom.launchCount,
                     lastLaunchedTime = custom.lastLaunchTime
                 )
             } else {
-                app
+                app.copy(isDocked = app.packageName in dockSet)
             }
         }
     }.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
+    )
+
+    val dockedApps: StateFlow<List<AppItem>> = combine(allApps, repository.dockPackages) { apps, dockPkgs ->
+        val appMap = apps.filter { !it.isHidden }.associateBy { it.packageName }
+        dockPkgs.mapNotNull { appMap[it] }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    val homePageAppsMap: StateFlow<Map<Int, List<AppItem>>> = combine(allApps, repository.homePages) { apps, pages ->
+        val appMap = apps.filter { !it.isHidden }.associateBy { it.packageName }
+        pages.mapValues { (_, pkgs) -> pkgs.mapNotNull { appMap[it] } }
+    }.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyMap()
     )
 
     init {
@@ -116,6 +144,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         viewModelScope.launch {
             val apps = repository.loadInstalledApps()
             _rawApps.value = apps
+            iconPackManager.refreshMatchesIfNeeded(apps)
         }
         checkDefaultLauncherStatus()
     }
@@ -228,6 +257,75 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         repository.updatePreferences { it.copy(drawerLayoutMode = mode) }
     }
 
+    // Custom Icon Pack Import actions
+    fun importIconPackFiles(uris: List<Uri>) {
+        if (uris.isEmpty()) return
+        viewModelScope.launch {
+            _isImportingIconPack.value = true
+            val result = iconPackManager.importFromFiles(uris, allApps.value)
+            _isImportingIconPack.value = false
+            val context = getApplication<Application>()
+            result.onSuccess { pack ->
+                updatePreferences { it.copy(iconPackStyle = IconPackStyle.IMPORTED_CUSTOM) }
+                val msg = if (pack.matchedCount > 0) {
+                    "Imported '${pack.packName}' (${pack.totalIcons} icons, ${pack.matchedCount} apps matched)"
+                } else {
+                    "Imported ${pack.totalIcons} icon(s). Tap 'Styles & map' to assign to apps."
+                }
+                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+            }.onFailure { err ->
+                Toast.makeText(
+                    context,
+                    err.message ?: "Could not import icon pack from selected file(s).",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    fun importIconPackFolder(treeUri: Uri) {
+        viewModelScope.launch {
+            _isImportingIconPack.value = true
+            val result = iconPackManager.importFromFolder(treeUri, allApps.value)
+            _isImportingIconPack.value = false
+            val context = getApplication<Application>()
+            result.onSuccess { pack ->
+                updatePreferences { it.copy(iconPackStyle = IconPackStyle.IMPORTED_CUSTOM) }
+                val msg = if (pack.matchedCount > 0) {
+                    "Imported folder '${pack.packName}' (${pack.totalIcons} icons, ${pack.matchedCount} apps matched)"
+                } else {
+                    "Imported ${pack.totalIcons} icons from folder. Tap 'Styles & map' to assign."
+                }
+                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+            }.onFailure { err ->
+                Toast.makeText(
+                    context,
+                    err.message ?: "Could not import icon pack folder.",
+                    Toast.LENGTH_LONG
+                ).show()
+            }
+        }
+    }
+
+    fun assignAppIconFromPack(packageName: String, iconFilePath: String?) {
+        viewModelScope.launch {
+            iconPackManager.assignManualIcon(packageName, iconFilePath, allApps.value)
+            if (iconFilePath != null && preferences.value.iconPackStyle != IconPackStyle.IMPORTED_CUSTOM) {
+                updatePreferences { it.copy(iconPackStyle = IconPackStyle.IMPORTED_CUSTOM) }
+            }
+        }
+    }
+
+    fun clearImportedIconPack() {
+        viewModelScope.launch {
+            iconPackManager.clearImportedPack()
+            if (preferences.value.iconPackStyle == IconPackStyle.IMPORTED_CUSTOM) {
+                updatePreferences { it.copy(iconPackStyle = IconPackStyle.MATERIAL_YOU_THEMED) }
+            }
+            Toast.makeText(getApplication(), "Imported icon pack removed", Toast.LENGTH_SHORT).show()
+        }
+    }
+
     // App Customization actions
     fun toggleDock(app: AppItem, isDocked: Boolean) {
         viewModelScope.launch {
@@ -328,5 +426,34 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun deleteFolder(folder: AppFolder) {
         repository.deleteFolder(folder.id)
+    }
+
+    // Home Screen & Dock Drag-and-Drop / Layout Actions
+    fun addAppToHomePage(page: Int, app: AppItem, index: Int? = null) {
+        repository.addAppToHomePage(page, app.packageName, index)
+    }
+
+    fun removeAppFromHomePage(page: Int, app: AppItem) {
+        repository.removeAppFromHomePage(page, app.packageName)
+    }
+
+    fun removeAppFromDock(app: AppItem) {
+        repository.removeAppFromDock(app.packageName)
+    }
+
+    fun moveAppWithinHomePage(page: Int, app: AppItem, toIndex: Int) {
+        repository.moveAppWithinHomePage(page, app.packageName, toIndex)
+    }
+
+    fun moveAppWithinDock(app: AppItem, toIndex: Int) {
+        repository.moveAppWithinDock(app.packageName, toIndex)
+    }
+
+    fun moveAppHomeToDock(page: Int, app: AppItem, dockIndex: Int) {
+        repository.moveAppHomeToDock(page, app.packageName, dockIndex)
+    }
+
+    fun moveAppDockToHome(app: AppItem, page: Int, homeIndex: Int?) {
+        repository.moveAppDockToHome(app.packageName, page, homeIndex)
     }
 }

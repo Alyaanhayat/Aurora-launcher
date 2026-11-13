@@ -1,6 +1,7 @@
 package com.example
 
 import android.os.Bundle
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -16,12 +17,17 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ui.components.AppContextMenu
 import com.example.ui.components.AppVaultAuthDialog
 import com.example.ui.components.AppVaultSheet
+import com.example.ui.components.LocalImportedIconMap
 import com.example.ui.screens.AppDrawerSheet
 import com.example.ui.screens.HomeScreen
 import com.example.ui.screens.LauncherSettingsDialog
@@ -35,16 +41,23 @@ class MainActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        window.addFlags(WindowManager.LayoutParams.FLAG_SHOW_WALLPAPER)
+        window.setBackgroundDrawableResource(android.R.color.transparent)
         enableEdgeToEdge()
 
         setContent {
             val preferences by viewModel.preferences.collectAsStateWithLifecycle()
             val allApps by viewModel.allApps.collectAsStateWithLifecycle()
+            val dockedApps by viewModel.dockedApps.collectAsStateWithLifecycle()
+            val homePageAppsMap by viewModel.homePageAppsMap.collectAsStateWithLifecycle()
             val folders by viewModel.folders.collectAsStateWithLifecycle()
             val notes by viewModel.notes.collectAsStateWithLifecycle()
             val tasks by viewModel.tasks.collectAsStateWithLifecycle()
             val habits by viewModel.habits.collectAsStateWithLifecycle()
             val uiState by viewModel.uiState.collectAsStateWithLifecycle()
+            val importedIconPack by viewModel.importedIconPack.collectAsStateWithLifecycle()
+            val isImportingIconPack by viewModel.isImportingIconPack.collectAsStateWithLifecycle()
+            var activeHomePage by remember { mutableIntStateOf(0) }
 
             val roleLauncher = rememberLauncherForActivityResult(
                 contract = ActivityResultContracts.StartActivityForResult()
@@ -60,11 +73,14 @@ class MainActivity : ComponentActivity() {
                 themeMode = preferences.themeMode,
                 paletteSeed = preferences.colorPaletteSeed
             ) {
-                Box(modifier = Modifier.fillMaxSize()) {
+                CompositionLocalProvider(LocalImportedIconMap provides importedIconPack.packageToPath) {
+                    Box(modifier = Modifier.fillMaxSize()) {
                     // Base Home Screen
                     HomeScreen(
                         preferences = preferences,
                         allApps = allApps,
+                        dockedApps = dockedApps,
+                        homePageAppsMap = homePageAppsMap,
                         notes = notes,
                         tasks = tasks,
                         habits = habits,
@@ -89,9 +105,28 @@ class MainActivity : ComponentActivity() {
                             viewModel.updatePreferences { it.copy(enabledWidgets = updated) }
                         },
                         onCycleWallpaper = {
-                            val next = (preferences.wallpaperThemeIndex + 1) % 4
+                            val next = (preferences.wallpaperThemeIndex + 1) % 5
                             viewModel.updatePreferences { it.copy(wallpaperThemeIndex = next) }
-                        }
+                        },
+                        onMoveAppWithinHomePage = { page, app, toIdx ->
+                            viewModel.moveAppWithinHomePage(page, app, toIdx)
+                        },
+                        onMoveAppWithinDock = { app, toIdx ->
+                            viewModel.moveAppWithinDock(app, toIdx)
+                        },
+                        onMoveAppHomeToDock = { page, app, dockIdx ->
+                            viewModel.moveAppHomeToDock(page, app, dockIdx)
+                        },
+                        onMoveAppDockToHome = { app, page, homeIdx ->
+                            viewModel.moveAppDockToHome(app, page, homeIdx)
+                        },
+                        onRemoveAppFromHomePage = { page, app ->
+                            viewModel.removeAppFromHomePage(page, app)
+                        },
+                        onRemoveAppFromDock = { app ->
+                            viewModel.removeAppFromDock(app)
+                        },
+                        onCurrentHomePageChanged = { activeHomePage = it }
                     )
 
                     // App Drawer Overlay with spring physics
@@ -113,6 +148,7 @@ class MainActivity : ComponentActivity() {
                             drawerLayoutMode = preferences.drawerLayoutMode,
                             iconPackStyle = preferences.iconPackStyle,
                             iconSize = preferences.iconSize,
+                            iconShape = preferences.iconShape,
                             showAppLabels = preferences.showAppLabels,
                             onAppClick = { viewModel.launchApp(it) },
                             onAppLongClick = { viewModel.openAppContextMenu(it) },
@@ -141,6 +177,7 @@ class MainActivity : ComponentActivity() {
                         SmartSearchOverlay(
                             apps = allApps,
                             iconPackStyle = preferences.iconPackStyle,
+                            iconShape = preferences.iconShape,
                             onAppClick = { viewModel.launchApp(it) },
                             onAppLongClick = { viewModel.openAppContextMenu(it) },
                             onDismiss = { viewModel.closeSearch() }
@@ -160,11 +197,21 @@ class MainActivity : ComponentActivity() {
                         ) + fadeOut()
                     ) {
                         val hiddenApps = allApps.filter { it.isHidden }
+                        val visibleApps = allApps.filter { !it.isHidden }
+                        val previewApps = visibleApps.take(4)
                         LauncherSettingsDialog(
                             preferences = preferences,
                             hiddenApps = hiddenApps,
+                            allApps = visibleApps,
+                            previewApps = previewApps,
+                            importedIconPack = importedIconPack,
+                            isImportingIconPack = isImportingIconPack,
                             isDefaultLauncher = uiState.isDefaultLauncher,
                             onSetDefaultLauncher = onSetDefaultLauncher,
+                            onImportIconPackFiles = { viewModel.importIconPackFiles(it) },
+                            onImportIconPackFolder = { viewModel.importIconPackFolder(it) },
+                            onAssignAppIcon = { pkg, path -> viewModel.assignAppIconFromPack(pkg, path) },
+                            onClearImportedIconPack = { viewModel.clearImportedIconPack() },
                             onUpdatePreferences = { update -> viewModel.updatePreferences(update) },
                             onUnhideApp = { viewModel.unhideApp(it) },
                             onDismiss = { viewModel.closeSettings() }
@@ -173,11 +220,22 @@ class MainActivity : ComponentActivity() {
 
                     // Context Menu Bottom Sheet
                     uiState.contextMenuApp?.let { targetApp ->
+                        val isOnCurrentHome = (homePageAppsMap[activeHomePage] ?: emptyList())
+                            .any { it.packageName == targetApp.packageName }
                         AppContextMenu(
                             app = targetApp,
                             iconPackStyle = preferences.iconPackStyle,
+                            iconShape = preferences.iconShape,
                             folders = folders,
+                            isOnHomeScreen = isOnCurrentHome,
                             onDismiss = { viewModel.closeAppContextMenu() },
+                            onToggleHomeScreen = {
+                                if (isOnCurrentHome) {
+                                    viewModel.removeAppFromHomePage(activeHomePage, targetApp)
+                                } else {
+                                    viewModel.addAppToHomePage(activeHomePage, targetApp)
+                                }
+                            },
                             onToggleDock = { viewModel.toggleDock(targetApp, it) },
                             onToggleFavorite = { viewModel.toggleFavorite(targetApp, it) },
                             onRename = { viewModel.renameApp(targetApp, it) },
@@ -215,6 +273,7 @@ class MainActivity : ComponentActivity() {
                             onDismiss = { viewModel.closeVaultSheet() }
                         )
                     }
+                }
                 }
             }
         }
