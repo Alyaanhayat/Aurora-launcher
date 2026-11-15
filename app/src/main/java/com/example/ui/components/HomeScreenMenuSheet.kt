@@ -15,12 +15,16 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.ColorLens
 import androidx.compose.material.icons.filled.Delete
+import androidx.compose.material.icons.filled.Edit
+import androidx.compose.material.icons.filled.GridOn
 import androidx.compose.material.icons.filled.NoteAdd
 import androidx.compose.material.icons.filled.Palette
 import androidx.compose.material.icons.filled.Settings
@@ -61,12 +65,16 @@ import com.example.model.LauncherPreferences
 fun HomeScreenMenuSheet(
     preferences: LauncherPreferences,
     currentPageIndex: Int,
+    isGridEditMode: Boolean = false,
     onDismiss: () -> Unit,
     onAddNewPage: () -> Unit,
     onRemoveCurrentPage: () -> Unit,
     onOpenSettings: () -> Unit,
     onCycleWallpaper: () -> Unit,
-    onToggleWidget: (String, Boolean) -> Unit
+    onToggleWidget: (String, Boolean) -> Unit,
+    onOpenThirdPartyWidgetPicker: () -> Unit = {},
+    onToggleGridGuides: (Boolean) -> Unit = {},
+    onToggleGridEditMode: () -> Unit = {}
 ) {
     val context = LocalContext.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
@@ -88,6 +96,7 @@ fun HomeScreenMenuSheet(
         Column(
             modifier = Modifier
                 .fillMaxWidth()
+                .verticalScroll(rememberScrollState())
                 .padding(horizontal = 20.dp, vertical = 8.dp)
                 .testTag("home_screen_long_press_menu")
         ) {
@@ -133,15 +142,18 @@ fun HomeScreenMenuSheet(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                // Action: Widget Options
+                // Action: App & System Widgets
                 MenuActionCard(
-                    icon = Icons.Default.Widgets,
-                    title = "Widget Options",
-                    subtitle = if (showWidgetPicker) "Hide options" else "Manage widgets",
-                    isHighlight = showWidgetPicker,
-                    onClick = { showWidgetPicker = !showWidgetPicker },
+                    icon = Icons.Default.Add,
+                    title = "Add App Widget",
+                    subtitle = "3rd-party & Android OS",
+                    isHighlight = true,
+                    onClick = {
+                        onDismiss()
+                        onOpenThirdPartyWidgetPicker()
+                    },
                     modifier = Modifier.weight(1f),
-                    tag = "menu_widget_options_btn"
+                    tag = "menu_third_party_widgets_btn"
                 )
 
                 // Action: Add Page
@@ -179,6 +191,38 @@ fun HomeScreenMenuSheet(
                     tag = "menu_settings_btn"
                 )
 
+                // Action: Edit Grid & Widgets
+                MenuActionCard(
+                    icon = Icons.Default.Edit,
+                    title = if (isGridEditMode) "Done Editing" else "Edit Grid",
+                    subtitle = if (isGridEditMode) "Exit grid edit mode" else "Resize & move widgets",
+                    isHighlight = isGridEditMode,
+                    onClick = {
+                        onToggleGridEditMode()
+                        onDismiss()
+                    },
+                    modifier = Modifier.weight(1f),
+                    tag = "menu_edit_grid_btn"
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                // Action: Built-in Widget Options
+                MenuActionCard(
+                    icon = Icons.Default.Widgets,
+                    title = "Shelf Widgets",
+                    subtitle = if (showWidgetPicker) "Hide options" else "Built-in widgets",
+                    isHighlight = showWidgetPicker,
+                    onClick = { showWidgetPicker = !showWidgetPicker },
+                    modifier = Modifier.weight(1f),
+                    tag = "menu_widget_options_btn"
+                )
+
                 // Action: Wallpaper Style
                 MenuActionCard(
                     icon = Icons.Default.ColorLens,
@@ -190,6 +234,48 @@ fun HomeScreenMenuSheet(
                     },
                     modifier = Modifier.weight(1f),
                     tag = "menu_wallpaper_btn"
+                )
+            }
+
+            Spacer(modifier = Modifier.height(10.dp))
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(14.dp))
+                    .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.55f))
+                    .padding(horizontal = 14.dp, vertical = 8.dp)
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.GridOn,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(20.dp)
+                    )
+                    Spacer(modifier = Modifier.width(10.dp))
+                    Column {
+                        Text(
+                            text = "Show Home Grid Guides",
+                            style = MaterialTheme.typography.bodyMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Text(
+                            text = "Always outline cells on the home screen",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+                Switch(
+                    checked = preferences.showHomeGridGuides,
+                    onCheckedChange = onToggleGridGuides,
+                    modifier = Modifier.testTag("switch_show_home_grid_guides")
                 )
             }
 

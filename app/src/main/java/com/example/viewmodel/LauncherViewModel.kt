@@ -1,6 +1,7 @@
 package com.example.viewmodel
 
 import android.app.Application
+import android.appwidget.AppWidgetProviderInfo
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
@@ -9,28 +10,40 @@ import androidx.lifecycle.viewModelScope
 import com.example.data.AppDatabase
 import com.example.data.LauncherRepository
 import com.example.model.AppCustomization
+import com.example.model.AppDrawerSide
 import com.example.model.AppFolder
 import com.example.model.AppItem
 import com.example.model.DrawerLayoutMode
 import com.example.model.HabitItem
+import com.example.model.HomeGridAppPlacement
 import com.example.model.IconPackStyle
 import com.example.model.LauncherPreferences
 import com.example.model.NoteItem
+import com.example.model.PlacedAppWidget
+import com.example.model.PlacedHomeFolder
+import com.example.model.SystemWidgetProviderEntry
 import com.example.model.TaskItem
+import com.example.util.AppIconBitmapCache
 import com.example.util.IconPackManager
 import com.example.util.ImportedIconPackState
+import com.example.util.SystemAppWidgetHelper
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flowOn
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 data class LauncherUiState(
     val isDrawerOpen: Boolean = false,
+    val drawerSide: AppDrawerSide = AppDrawerSide.FULL,
     val isSearchOpen: Boolean = false,
     val isSettingsOpen: Boolean = false,
+    val isCrashAssistantOpen: Boolean = false,
     val isDefaultLauncher: Boolean = false,
     val isVaultAuthOpen: Boolean = false,
     val isVaultSheetOpen: Boolean = false,
@@ -64,6 +77,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     )
 
     val folders: StateFlow<List<AppFolder>> = repository.allFolders.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    val placedHomeFolders: StateFlow<List<PlacedHomeFolder>> = repository.placedHomeFolders.stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
@@ -112,7 +131,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
                 app.copy(isDocked = app.packageName in dockSet)
             }
         }
-    }.stateIn(
+    }.flowOn(Dispatchers.Default).stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
@@ -121,7 +140,7 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val dockedApps: StateFlow<List<AppItem>> = combine(allApps, repository.dockPackages) { apps, dockPkgs ->
         val appMap = apps.filter { !it.isHidden }.associateBy { it.packageName }
         dockPkgs.mapNotNull { appMap[it] }
-    }.stateIn(
+    }.flowOn(Dispatchers.Default).stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyList()
@@ -130,11 +149,37 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
     val homePageAppsMap: StateFlow<Map<Int, List<AppItem>>> = combine(allApps, repository.homePages) { apps, pages ->
         val appMap = apps.filter { !it.isHidden }.associateBy { it.packageName }
         pages.mapValues { (_, pkgs) -> pkgs.mapNotNull { appMap[it] } }
-    }.stateIn(
+    }.flowOn(Dispatchers.Default).stateIn(
         scope = viewModelScope,
         started = SharingStarted.WhileSubscribed(5000),
         initialValue = emptyMap()
     )
+
+    val homeGridAppsMap: StateFlow<Map<Int, List<Pair<HomeGridAppPlacement, AppItem>>>> = combine(
+        allApps,
+        repository.homeGridApps
+    ) { apps, gridMap ->
+        val appMap = apps.filter { !it.isHidden }.associateBy { it.packageName }
+        gridMap.mapValues { (_, placements) ->
+            placements.mapNotNull { p -> appMap[p.packageName]?.let { p to it } }
+        }
+    }.flowOn(Dispatchers.Default).stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyMap()
+    )
+
+    val placedWidgets: StateFlow<List<PlacedAppWidget>> = repository.placedWidgets.stateIn(
+        scope = viewModelScope,
+        started = SharingStarted.WhileSubscribed(5000),
+        initialValue = emptyList()
+    )
+
+    private val _systemWidgetProviders = MutableStateFlow<List<SystemWidgetProviderEntry>>(emptyList())
+    val systemWidgetProviders: StateFlow<List<SystemWidgetProviderEntry>> = _systemWidgetProviders.asStateFlow()
+
+    private val _isLoadingWidgetProviders = MutableStateFlow(false)
+    val isLoadingWidgetProviders: StateFlow<Boolean> = _isLoadingWidgetProviders.asStateFlow()
 
     init {
         loadApps()
@@ -145,6 +190,11 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             val apps = repository.loadInstalledApps()
             _rawApps.value = apps
             iconPackManager.refreshMatchesIfNeeded(apps)
+            launch { AppIconBitmapCache.prewarmSystemIcons(getApplication(), apps) }
+            val importedPaths = iconPackManager.state.value.packageToPath.values
+            if (importedPaths.isNotEmpty()) {
+                launch { AppIconBitmapCache.prewarmImportedIcons(importedPaths) }
+            }
         }
         checkDefaultLauncherStatus()
     }
@@ -154,8 +204,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         _uiState.value = _uiState.value.copy(isDefaultLauncher = isDefault)
     }
 
-    fun openDrawer() {
-        _uiState.value = _uiState.value.copy(isDrawerOpen = true, isSearchOpen = false)
+    fun openDrawer(side: AppDrawerSide = AppDrawerSide.FULL) {
+        _uiState.value = _uiState.value.copy(
+            isDrawerOpen = true,
+            drawerSide = side,
+            isSearchOpen = false
+        )
     }
 
     fun closeDrawer() {
@@ -176,6 +230,14 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun closeSettings() {
         _uiState.value = _uiState.value.copy(isSettingsOpen = false)
+    }
+
+    fun openCrashAssistant() {
+        _uiState.value = _uiState.value.copy(isCrashAssistantOpen = true)
+    }
+
+    fun closeCrashAssistant() {
+        _uiState.value = _uiState.value.copy(isCrashAssistantOpen = false)
     }
 
     fun openAppContextMenu(app: AppItem) {
@@ -205,6 +267,12 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
             closeDrawer()
             closeSearch()
             openSettings()
+            return
+        }
+        if (app.packageName == "com.aurora.launcher.crashassistant") {
+            closeDrawer()
+            closeSearch()
+            openCrashAssistant()
             return
         }
         viewModelScope.launch {
@@ -428,9 +496,27 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
         repository.deleteFolder(folder.id)
     }
 
-    // Home Screen & Dock Drag-and-Drop / Layout Actions
-    fun addAppToHomePage(page: Int, app: AppItem, index: Int? = null) {
-        repository.addAppToHomePage(page, app.packageName, index)
+    // Home Screen & Dock Drag-and-Drop / Grid Layout Actions
+    fun addAppToHomePage(
+        page: Int,
+        app: AppItem,
+        targetRow: Int? = null,
+        targetCol: Int? = null,
+        cols: Int = 4,
+        rows: Int = 5
+    ) {
+        repository.addAppToHomePage(page, app.packageName, targetRow, targetCol, cols, rows)
+    }
+
+    fun placeAppOnHomeGrid(
+        page: Int,
+        app: AppItem,
+        targetRow: Int,
+        targetCol: Int,
+        cols: Int,
+        rows: Int
+    ) {
+        repository.placeAppOnHomeGrid(page, app.packageName, targetRow, targetCol, cols, rows)
     }
 
     fun removeAppFromHomePage(page: Int, app: AppItem) {
@@ -455,5 +541,171 @@ class LauncherViewModel(application: Application) : AndroidViewModel(application
 
     fun moveAppDockToHome(app: AppItem, page: Int, homeIndex: Int?) {
         repository.moveAppDockToHome(app.packageName, page, homeIndex)
+    }
+
+    fun moveAppDockToHomeGrid(
+        app: AppItem,
+        page: Int,
+        targetRow: Int?,
+        targetCol: Int?,
+        cols: Int,
+        rows: Int
+    ) {
+        repository.moveAppDockToHomeGrid(app.packageName, page, targetRow, targetCol, cols, rows)
+    }
+
+    // Third-Party & System Android AppWidgets Actions
+    fun loadSystemWidgetProviders(cols: Int = 4, rows: Int = 4) {
+        viewModelScope.launch {
+            _isLoadingWidgetProviders.value = true
+            val list = withContext(Dispatchers.IO) {
+                SystemAppWidgetHelper.loadInstalledWidgetProviders(getApplication(), cols, rows)
+            }
+            _systemWidgetProviders.value = list
+            _isLoadingWidgetProviders.value = false
+        }
+    }
+
+    fun addThirdPartyWidget(
+        appWidgetId: Int,
+        providerInfo: AppWidgetProviderInfo,
+        page: Int,
+        preferredRow: Int?,
+        preferredCol: Int?,
+        cols: Int,
+        rows: Int
+    ) {
+        val ctx = getApplication<Application>()
+        val label = runCatching { providerInfo.loadLabel(ctx.packageManager) }.getOrNull()
+            ?.takeIf { it.isNotBlank() } ?: providerInfo.provider.packageName
+        val (spanX, spanY) = SystemAppWidgetHelper.computeDefaultSpans(providerInfo, cols, rows)
+        val widget = PlacedAppWidget(
+            appWidgetId = appWidgetId,
+            providerPackage = providerInfo.provider.packageName,
+            providerClass = providerInfo.provider.className,
+            label = label,
+            page = page,
+            row = preferredRow ?: 0,
+            col = preferredCol ?: 0,
+            spanX = spanX,
+            spanY = spanY
+        )
+        repository.addPlacedWidget(widget, cols, rows)
+    }
+
+    fun moveThirdPartyWidget(
+        appWidgetId: Int,
+        targetPage: Int,
+        targetRow: Int,
+        targetCol: Int,
+        cols: Int,
+        rows: Int
+    ): Boolean {
+        return repository.movePlacedWidget(appWidgetId, targetPage, targetRow, targetCol, cols, rows)
+    }
+
+    fun resizeThirdPartyWidget(
+        appWidgetId: Int,
+        newSpanX: Int,
+        newSpanY: Int,
+        cols: Int,
+        rows: Int
+    ): Boolean {
+        return repository.resizePlacedWidget(appWidgetId, newSpanX, newSpanY, cols, rows)
+    }
+
+    fun updateThirdPartyWidgetBounds(
+        appWidgetId: Int,
+        targetRow: Int,
+        targetCol: Int,
+        newSpanX: Int,
+        newSpanY: Int,
+        cols: Int,
+        rows: Int
+    ): Boolean {
+        return repository.updatePlacedWidgetBounds(
+            appWidgetId = appWidgetId,
+            targetRow = targetRow,
+            targetCol = targetCol,
+            newSpanX = newSpanX,
+            newSpanY = newSpanY,
+            cols = cols,
+            rows = rows
+        )
+    }
+
+    fun removeThirdPartyWidget(appWidgetId: Int) {
+        repository.removePlacedWidget(appWidgetId)
+        SystemAppWidgetHelper.deleteAppWidgetId(getApplication(), appWidgetId)
+    }
+
+    // Home Screen Folder Placement & Resizing
+    fun placeFolderOnHome(
+        folderId: String,
+        page: Int,
+        preferredRow: Int?,
+        preferredCol: Int?,
+        spanX: Int,
+        spanY: Int,
+        cols: Int,
+        rows: Int
+    ) {
+        repository.placeFolderOnHome(
+            folderId = folderId,
+            page = page,
+            preferredRow = preferredRow,
+            preferredCol = preferredCol,
+            spanX = spanX,
+            spanY = spanY,
+            cols = cols,
+            rows = rows
+        )
+    }
+
+    fun createAndPlaceFolderOnHome(
+        name: String,
+        page: Int,
+        preferredRow: Int?,
+        preferredCol: Int?,
+        spanX: Int,
+        spanY: Int,
+        cols: Int,
+        rows: Int
+    ) {
+        val folder = repository.createFolder(name.trim().ifBlank { "Folder" })
+        repository.placeFolderOnHome(
+            folderId = folder.id,
+            page = page,
+            preferredRow = preferredRow,
+            preferredCol = preferredCol,
+            spanX = spanX,
+            spanY = spanY,
+            cols = cols,
+            rows = rows
+        )
+    }
+
+    fun updateHomeFolderBounds(
+        folderId: String,
+        targetRow: Int,
+        targetCol: Int,
+        newSpanX: Int,
+        newSpanY: Int,
+        cols: Int,
+        rows: Int
+    ): Boolean {
+        return repository.updateHomeFolderBounds(
+            folderId = folderId,
+            targetRow = targetRow,
+            targetCol = targetCol,
+            newSpanX = newSpanX,
+            newSpanY = newSpanY,
+            cols = cols,
+            rows = rows
+        )
+    }
+
+    fun removeFolderFromHome(folderId: String) {
+        repository.removeFolderFromHome(folderId)
     }
 }

@@ -7,6 +7,18 @@ enum class ThemeMode(val label: String) {
     CLEAN_LIGHT("Clean Light")
 }
 
+enum class DeviceMode(val label: String, val description: String) {
+    AUTO("Auto", "Automatically switches between Phone and Tablet layout by screen width"),
+    PHONE("Phone", "Handheld compact layout with full-screen app drawer"),
+    TABLET("Tablet", "Wide tablet home screen, left productivity shelf & left/right side app drawer")
+}
+
+enum class AppDrawerSide {
+    FULL,
+    LEFT,
+    RIGHT
+}
+
 enum class ColorPaletteSeed(
     val label: String,
     val primaryColor: Long,
@@ -44,6 +56,26 @@ enum class IconSize(val label: String, val dpValue: Int) {
     LARGE("Comfortable (62dp)", 62)
 }
 
+enum class TabletFolderSize(
+    val label: String,
+    val tileSizeDp: Int,
+    val previewColumns: Int,
+    val dialogMaxWidthDp: Int,
+    val dialogCols: Int
+) {
+    STANDARD("Standard", 56, 2, 460, 4),
+    LARGE("Large", 78, 3, 620, 5),
+    EXTRA_LARGE("XL", 104, 3, 760, 6)
+}
+
+enum class TabletFolderBackdrop(val label: String, val description: String) {
+    TONAL_SURFACE("Tonal Surface", "Clean Material You surface container"),
+    FROSTED_GLASS("Frosted Glass", "Translucent Material You tinted glass"),
+    MONET_GRADIENT("Monet Gradient", "Soft primary-to-tertiary Material You blend"),
+    VIBRANT_MONET("Vibrant Monet", "Rich primaryContainer backdrop tint"),
+    OUTLINED_ACCENT("Outlined Accent", "Tinted backdrop framed by Material You outline")
+}
+
 enum class DrawerLayoutMode(val label: String, val description: String) {
     GRID_4("4-Column Grid", "Classic standard Android grid with icons and labels"),
     GRID_5("5-Column Compact", "Dense high-capacity grid for larger screens"),
@@ -65,9 +97,13 @@ enum class HomeScreenWidget(val id: String, val title: String, val subtitle: Str
 data class LauncherPreferences(
     val themeMode: ThemeMode = ThemeMode.MINIMAL_DARK,
     val colorPaletteSeed: ColorPaletteSeed = ColorPaletteSeed.LAVENDER,
+    val deviceMode: DeviceMode = DeviceMode.AUTO,
     val iconShape: IconShape = IconShape.SQUIRCLE,
     val iconPackStyle: IconPackStyle = IconPackStyle.MATERIAL_YOU_THEMED,
     val iconSize: IconSize = IconSize.STANDARD,
+    val tabletFolderSize: TabletFolderSize = TabletFolderSize.LARGE,
+    val tabletExpandedFolderIconShape: IconShape? = null,
+    val tabletFolderBackdrop: TabletFolderBackdrop = TabletFolderBackdrop.TONAL_SURFACE,
     val showAppLabels: Boolean = true,
     val drawerLayoutMode: DrawerLayoutMode = DrawerLayoutMode.GRID_4,
     val dockAppCount: Int = 5,
@@ -75,6 +111,9 @@ data class LauncherPreferences(
     val enableSmartSearch: Boolean = true,
     val enableProductivityShelf: Boolean = true,
     val allowThirdPartyWidgets: Boolean = true,
+    val dynamicWallpaperColors: Boolean = true,
+    val hapticFeedbackEnabled: Boolean = true,
+    val showHomeGridGuides: Boolean = false,
     val wallpaperThemeIndex: Int = 0,
     val homePageCount: Int = 1,
     val enabledWidgets: Set<String> = setOf(

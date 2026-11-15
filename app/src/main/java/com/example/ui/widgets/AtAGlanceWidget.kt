@@ -60,27 +60,45 @@ fun AtAGlanceWidget(
     var currentDate by remember { mutableStateOf(SimpleDateFormat("EEEE, MMMM d", Locale.getDefault()).format(Date())) }
     var batteryPct by remember { mutableIntStateOf(85) }
     var isCharging by remember { mutableStateOf(false) }
+    var widgetFault by remember { mutableStateOf<com.example.ui.components.RenderFaultRecord?>(null) }
 
     LaunchedEffect(Unit) {
         while (true) {
-            val now = Date()
-            currentTime = SimpleDateFormat("h:mm", Locale.getDefault()).format(now)
-            currentAmPm = SimpleDateFormat("a", Locale.getDefault()).format(now)
-            currentDate = SimpleDateFormat("EEEE, MMMM d", Locale.getDefault()).format(now)
+            runCatching {
+                val now = Date()
+                currentTime = SimpleDateFormat("h:mm", Locale.getDefault()).format(now)
+                currentAmPm = SimpleDateFormat("a", Locale.getDefault()).format(now)
+                currentDate = SimpleDateFormat("EEEE, MMMM d", Locale.getDefault()).format(now)
 
-            // Read battery
-            val batteryStatus: Intent? = IntentFilter(Intent.ACTION_BATTERY_CHANGED).let { filter ->
-                context.registerReceiver(null, filter)
-            }
-            batteryStatus?.let {
-                val level = it.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
-                val scale = it.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
-                batteryPct = if (level >= 0 && scale > 0) (level * 100 / scale) else 85
-                val status = it.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
-                isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
+                // Read battery
+                val batteryStatus: Intent? = IntentFilter(Intent.ACTION_BATTERY_CHANGED).let { filter ->
+                    context.registerReceiver(null, filter)
+                }
+                batteryStatus?.let {
+                    val level = it.getIntExtra(BatteryManager.EXTRA_LEVEL, -1)
+                    val scale = it.getIntExtra(BatteryManager.EXTRA_SCALE, -1)
+                    batteryPct = if (level >= 0 && scale > 0) (level * 100 / scale) else 85
+                    val status = it.getIntExtra(BatteryManager.EXTRA_STATUS, -1)
+                    isCharging = status == BatteryManager.BATTERY_STATUS_CHARGING || status == BatteryManager.BATTERY_STATUS_FULL
+                }
+            }.onFailure { err ->
+                widgetFault = com.example.ui.components.RenderFailsafeMonitor.reportFault(
+                    component = "At-a-Glance Widget",
+                    reason = "Clock or battery telemetry failed to render",
+                    throwable = err
+                )
             }
             delay(1000L)
         }
+    }
+
+    widgetFault?.let { fault ->
+        com.example.ui.components.PurpleFailsafeCard(
+            fault = fault,
+            shape = RoundedCornerShape(28.dp),
+            modifier = modifier
+        )
+        return
     }
 
     Card(

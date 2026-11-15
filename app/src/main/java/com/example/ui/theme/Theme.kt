@@ -1,7 +1,12 @@
 package com.example.ui.theme
 
 import android.app.Activity
+import android.app.WallpaperManager
+import android.content.Context
+import android.content.res.Configuration
 import android.os.Build
+import android.os.Handler
+import android.os.Looper
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
@@ -10,9 +15,16 @@ import androidx.compose.material3.dynamicDarkColorScheme
 import androidx.compose.material3.dynamicLightColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.SideEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.graphics.luminance
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.core.view.WindowCompat
@@ -21,12 +33,164 @@ import com.example.model.ThemeMode
 
 @Composable
 fun isLauncherDarkTheme(themeMode: ThemeMode): Boolean {
-    val systemInDark = isSystemInDarkTheme()
+    val configNight = LocalConfiguration.current.uiMode and Configuration.UI_MODE_NIGHT_MASK
+    val systemInDark = when (configNight) {
+        Configuration.UI_MODE_NIGHT_YES -> true
+        Configuration.UI_MODE_NIGHT_NO -> false
+        else -> isSystemInDarkTheme()
+    }
     return when (themeMode) {
         ThemeMode.SYSTEM -> systemInDark
         ThemeMode.MINIMAL_DARK -> true
         ThemeMode.AMOLED_BLACK -> true
         ThemeMode.CLEAN_LIGHT -> false
+    }
+}
+
+private fun readSystemWallpaperTriple(context: Context): Triple<Color, Color, Color>? {
+    if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1) return null
+    return runCatching {
+        val colors = WallpaperManager.getInstance(context)
+            .getWallpaperColors(WallpaperManager.FLAG_SYSTEM) ?: return null
+        val p = Color(colors.primaryColor.toArgb())
+        val s = colors.secondaryColor?.let { Color(it.toArgb()) } ?: lerp(p, Color(0xFF64B5F6), 0.35f)
+        val t = colors.tertiaryColor?.let { Color(it.toArgb()) } ?: lerp(s, Color(0xFFE879F9), 0.35f)
+        Triple(p, s, t)
+    }.getOrNull()
+}
+
+private fun tuneAccentForMode(raw: Color, isDark: Boolean): Color {
+    val lum = raw.luminance()
+    return if (isDark) {
+        when {
+            lum < 0.20f -> lerp(raw, Color.White, 0.42f)
+            lum < 0.36f -> lerp(raw, Color.White, 0.24f)
+            lum > 0.86f -> lerp(raw, Color(0xFF94A3B8), 0.20f)
+            else -> raw
+        }
+    } else {
+        when {
+            lum > 0.55f -> lerp(raw, Color(0xFF111827), 0.42f)
+            lum > 0.36f -> lerp(raw, Color(0xFF0F172A), 0.24f)
+            else -> raw
+        }
+    }
+}
+
+@Composable
+fun rememberWallpaperAccentColors(wallpaperThemeIndex: Int): Triple<Color, Color, Color>? {
+    val context = LocalContext.current
+    var systemColors by remember(context, wallpaperThemeIndex) {
+        mutableStateOf(
+            if (wallpaperThemeIndex == 0) readSystemWallpaperTriple(context) else null
+        )
+    }
+
+    if (wallpaperThemeIndex == 0 && Build.VERSION.SDK_INT >= Build.VERSION_CODES.O_MR1) {
+        DisposableEffect(context) {
+            val wm = runCatching { WallpaperManager.getInstance(context) }.getOrNull()
+            val listener = WallpaperManager.OnColorsChangedListener { colors, which ->
+                if ((which and WallpaperManager.FLAG_SYSTEM) != 0) {
+                    systemColors = colors?.let {
+                        val p = Color(it.primaryColor.toArgb())
+                        val s = it.secondaryColor?.let { sc -> Color(sc.toArgb()) } ?: lerp(p, Color(0xFF64B5F6), 0.35f)
+                        val t = it.tertiaryColor?.let { tc -> Color(tc.toArgb()) } ?: lerp(s, Color(0xFFE879F9), 0.35f)
+                        Triple(p, s, t)
+                    }
+                }
+            }
+            if (wm != null) {
+                runCatching {
+                    wm.addOnColorsChangedListener(listener, Handler(Looper.getMainLooper()))
+                }
+            }
+            onDispose {
+                if (wm != null) {
+                    runCatching { wm.removeOnColorsChangedListener(listener) }
+                }
+            }
+        }
+    }
+
+    return when (wallpaperThemeIndex) {
+        0 -> systemColors
+        1 -> Triple(Color(0xFF2563EB), Color(0xFF0284C7), Color(0xFF6366F1)) // Cosmic Sky
+        2 -> Triple(Color(0xFF7C3AED), Color(0xFF9333EA), Color(0xFFD946EF)) // Velvet Lavender
+        3 -> Triple(Color(0xFF059669), Color(0xFF0D9488), Color(0xFF10B981)) // Emerald Mist
+        else -> Triple(Color(0xFF475569), Color(0xFF64748B), Color(0xFF334155)) // Minimal Pure
+    }
+}
+
+fun buildWallpaperAdaptiveColorScheme(
+    accents: Triple<Color, Color, Color>,
+    isDark: Boolean,
+    isAmoled: Boolean
+): ColorScheme {
+    val primary = tuneAccentForMode(accents.first, isDark)
+    val secondary = tuneAccentForMode(accents.second, isDark)
+    val tertiary = tuneAccentForMode(accents.third, isDark)
+
+    return if (isDark) {
+        val bg = if (isAmoled) AmoledBg else lerp(DarkBg, accents.first, 0.08f)
+        val surface = if (isAmoled) AmoledSurface else lerp(DarkSurface, accents.first, 0.10f)
+        val surfaceVariant = if (isAmoled) AmoledSurfaceVariant else lerp(DarkSurfaceVariant, accents.first, 0.14f)
+        val onPrimary = if (primary.luminance() > 0.56f) Color(0xFF0F131A) else Color.White
+        val onSecondary = if (secondary.luminance() > 0.56f) Color(0xFF0F131A) else Color.White
+        val onTertiary = if (tertiary.luminance() > 0.56f) Color(0xFF0F131A) else Color.White
+
+        darkColorScheme(
+            primary = primary,
+            onPrimary = onPrimary,
+            primaryContainer = lerp(surface, primary, 0.28f),
+            onPrimaryContainer = Color.White,
+            secondary = secondary,
+            onSecondary = onSecondary,
+            secondaryContainer = lerp(surface, secondary, 0.24f),
+            onSecondaryContainer = Color.White,
+            tertiary = tertiary,
+            onTertiary = onTertiary,
+            tertiaryContainer = lerp(surface, tertiary, 0.24f),
+            onTertiaryContainer = Color.White,
+            background = bg,
+            onBackground = Color(0xFFF0F1F5),
+            surface = surface,
+            onSurface = Color(0xFFECEFF4),
+            surfaceVariant = surfaceVariant,
+            onSurfaceVariant = Color(0xFFB5BAC8),
+            outline = lerp(Color(0xFF383B47), primary, 0.24f),
+            outlineVariant = lerp(Color(0xFF2B2E38), primary, 0.18f),
+            error = Color(0xFFFF6B6B),
+            onError = Color(0xFF1F0000),
+            errorContainer = Color(0xFF5C1414),
+            onErrorContainer = Color(0xFFFFDAD6)
+        )
+    } else {
+        lightColorScheme(
+            primary = primary,
+            onPrimary = Color.White,
+            primaryContainer = lerp(LightSurface, primary, 0.16f),
+            onPrimaryContainer = lerp(primary, Color.Black, 0.35f),
+            secondary = secondary,
+            onSecondary = Color.White,
+            secondaryContainer = lerp(LightSurface, secondary, 0.16f),
+            onSecondaryContainer = lerp(secondary, Color.Black, 0.35f),
+            tertiary = tertiary,
+            onTertiary = Color.White,
+            tertiaryContainer = lerp(LightSurface, tertiary, 0.16f),
+            onTertiaryContainer = lerp(tertiary, Color.Black, 0.35f),
+            background = lerp(LightBg, accents.first, 0.04f),
+            onBackground = Color(0xFF1A1C22),
+            surface = LightSurface,
+            onSurface = Color(0xFF1A1C22),
+            surfaceVariant = lerp(LightSurfaceVariant, accents.first, 0.08f),
+            onSurfaceVariant = Color(0xFF4B5262),
+            outline = lerp(Color(0xFFC8CEDB), primary, 0.22f),
+            outlineVariant = Color(0xFFE0E4EE),
+            error = Color(0xFFD32F2F),
+            onError = Color.White,
+            errorContainer = Color(0xFFFFDAD6),
+            onErrorContainer = Color(0xFF410002)
+        )
     }
 }
 
@@ -118,6 +282,8 @@ fun buildCustomColorScheme(
 fun AuraLauncherTheme(
     themeMode: ThemeMode = ThemeMode.MINIMAL_DARK,
     paletteSeed: ColorPaletteSeed = ColorPaletteSeed.LAVENDER,
+    wallpaperThemeIndex: Int = 0,
+    dynamicWallpaperColors: Boolean = true,
     content: @Composable () -> Unit
 ) {
     val isDark = isLauncherDarkTheme(themeMode)
@@ -136,10 +302,29 @@ fun AuraLauncherTheme(
         }
     }
 
-    val colorScheme = if (themeMode == ThemeMode.SYSTEM && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        if (isDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+    val wallpaperAccents = if (dynamicWallpaperColors) {
+        rememberWallpaperAccentColors(wallpaperThemeIndex)
     } else {
-        buildCustomColorScheme(paletteSeed, isDark = isDark, isAmoled = isAmoled)
+        null
+    }
+
+    val colorScheme = when {
+        dynamicWallpaperColors &&
+            themeMode == ThemeMode.SYSTEM &&
+            wallpaperThemeIndex == 0 &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+            if (isDark) dynamicDarkColorScheme(context) else dynamicLightColorScheme(context)
+        }
+        dynamicWallpaperColors && wallpaperAccents != null -> {
+            buildWallpaperAdaptiveColorScheme(
+                accents = wallpaperAccents,
+                isDark = isDark,
+                isAmoled = isAmoled
+            )
+        }
+        else -> {
+            buildCustomColorScheme(paletteSeed, isDark = isDark, isAmoled = isAmoled)
+        }
     }
 
     MaterialTheme(

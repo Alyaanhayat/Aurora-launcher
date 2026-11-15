@@ -1,7 +1,7 @@
 package com.example.ui.components
 
 import android.content.Context
-import android.graphics.drawable.Drawable
+import android.view.HapticFeedbackConstants
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.LocalIndication
 import androidx.compose.foundation.background
@@ -28,6 +28,7 @@ import kotlin.math.sin
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Apps
 import androidx.compose.material.icons.filled.Book
+import androidx.compose.material.icons.filled.BugReport
 import androidx.compose.material.icons.filled.Calculate
 import androidx.compose.material.icons.filled.CalendarMonth
 import androidx.compose.material.icons.filled.Chat
@@ -51,6 +52,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
@@ -61,14 +63,15 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.Shape
-import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.changedToUpIgnoreConsumed
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -77,19 +80,18 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.foundation.layout.fillMaxSize
-import androidx.compose.runtime.CompositionLocal
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.graphics.Shadow
-import androidx.core.graphics.drawable.toBitmap
 import com.example.R
 import com.example.model.AppIconType
 import com.example.model.AppItem
 import com.example.model.IconPackStyle
 import com.example.model.IconShape
 import com.example.model.IconSize
-import com.example.util.IconPackManager
+import com.example.util.AppIconBitmapCache
 
 val LocalImportedIconMap = staticCompositionLocalOf<Map<String, String>> { emptyMap() }
+val LocalLauncherHapticEnabled = staticCompositionLocalOf { true }
 
 fun getGlyphForName(name: String): ImageVector {
     return when (name) {
@@ -112,6 +114,7 @@ fun getGlyphForName(name: String): ImageVector {
         "fitness" -> Icons.Default.FitnessCenter
         "games" -> Icons.Default.SportsEsports
         "book" -> Icons.Default.Book
+        "bug_report" -> Icons.Default.BugReport
         else -> Icons.Default.Apps
     }
 }
@@ -184,9 +187,12 @@ fun AppIconView(
     val sizeDp = iconSize.dpValue.dp
     val shape = getIconShape(iconPackStyle, iconShape)
     val context = LocalContext.current
+    val view = LocalView.current
+    val hapticsEnabled by rememberUpdatedState(LocalLauncherHapticEnabled.current)
     val interactionSource = remember { MutableInteractionSource() }
 
     val currentOnClick by rememberUpdatedState(onClick)
+    val currentOnLongClick by rememberUpdatedState(onLongClick)
     val currentOnTouchActiveChanged by rememberUpdatedState(onTouchActiveChanged)
     val currentOnDragStart by rememberUpdatedState(onDragStartAfterLongPress)
     val currentOnDragDelta by rememberUpdatedState(onDragDelta)
@@ -277,7 +283,12 @@ fun AppIconView(
             .clip(RoundedCornerShape(16.dp))
             .combinedClickable(
                 onClick = onClick,
-                onLongClick = onLongClick
+                onLongClick = {
+                    if (hapticsEnabled) {
+                        view.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
+                    }
+                    currentOnLongClick()
+                }
             )
     }
 
@@ -347,39 +358,81 @@ fun AppIconGraphic(
     shape: Shape,
     context: Context
 ) {
-    val glyph = getGlyphForName(app.iconGlyphName)
-    val fallbackColor = Color(app.iconColor)
-
-    val systemDrawable: Drawable? = remember(app.packageName) {
-        if (app.iconType == AppIconType.SYSTEM_PACKAGE) {
-            runCatching {
-                context.packageManager.getApplicationIcon(app.packageName)
-            }.getOrNull()
-        } else null
-    }
+    val glyph = remember(app.iconGlyphName) { getGlyphForName(app.iconGlyphName) }
+    val fallbackColor = remember(app.iconColor) { Color(app.iconColor) }
 
     val importedMap = LocalImportedIconMap.current
-    val importedPath = importedMap[app.packageName]
-    val importedBitmap = remember(importedPath, style) {
-        if (style == IconPackStyle.IMPORTED_CUSTOM && importedPath != null) {
-            IconPackManager.decodeSampledBitmap(importedPath, reqSizePx = 192)?.asImageBitmap()
-        } else null
+    val importedPath = if (style == IconPackStyle.IMPORTED_CUSTOM) importedMap[app.packageName] else null
+    val cachedImported = remember(importedPath) {
+        importedPath?.let { AppIconBitmapCache.getImportedIcon(it) }
     }
-
-    if (style == IconPackStyle.IMPORTED_CUSTOM && importedBitmap != null) {
-        Box(
-            contentAlignment = Alignment.Center,
-            modifier = Modifier
-                .size(size)
-                .clip(shape)
-        ) {
-            Image(
-                bitmap = importedBitmap,
-                contentDescription = app.label,
-                contentScale = ContentScale.Fit,
-                modifier = Modifier.fillMaxSize()
+    val importedState by produceState<Pair<ImageBitmap?, RenderFaultRecord?>>(
+        initialValue = cachedImported to (importedPath?.let { AppIconBitmapCache.getImportedFault(it) }),
+        key1 = importedPath
+    ) {
+        if (importedPath != null && cachedImported == null) {
+            value = AppIconBitmapCache.loadImportedIcon(
+                filePath = importedPath,
+                componentName = "Imported Icon (${app.displayLabel})"
             )
         }
+    }
+    val importedBitmap = cachedImported ?: importedState.first
+    val importedFault = importedState.second
+
+    val isSystemPackage = app.iconType == AppIconType.SYSTEM_PACKAGE
+    val safeDrawableTargetPx = remember(size) { (size.value * 2f).toInt().coerceIn(64, 192) }
+    val cachedSystemBitmap = remember(app.packageName, isSystemPackage) {
+        if (isSystemPackage) AppIconBitmapCache.getSystemIcon(app.packageName) else null
+    }
+    val systemState by produceState<Pair<ImageBitmap?, RenderFaultRecord?>>(
+        initialValue = cachedSystemBitmap to (if (isSystemPackage) AppIconBitmapCache.getSystemFault(app.packageName) else null),
+        key1 = app.packageName,
+        key2 = isSystemPackage
+    ) {
+        if (isSystemPackage && cachedSystemBitmap == null) {
+            value = AppIconBitmapCache.loadSystemIcon(
+                context = context,
+                packageName = app.packageName,
+                targetPx = safeDrawableTargetPx,
+                componentName = "App Icon (${app.displayLabel})"
+            )
+        }
+    }
+    val safeSystemBitmap = cachedSystemBitmap ?: systemState.first
+    val systemFault = systemState.second
+
+    if (style == IconPackStyle.IMPORTED_CUSTOM && importedPath != null) {
+        if (importedBitmap != null) {
+            Box(
+                contentAlignment = Alignment.Center,
+                modifier = Modifier
+                    .size(size)
+                    .clip(shape)
+            ) {
+                Image(
+                    bitmap = importedBitmap,
+                    contentDescription = app.label,
+                    contentScale = ContentScale.Fit,
+                    modifier = Modifier.fillMaxSize()
+                )
+            }
+        } else if (importedFault != null) {
+            PurpleFailsafeIcon(
+                size = size,
+                shape = shape,
+                contentDescription = app.label
+            )
+        }
+        return
+    }
+
+    if (isSystemPackage && systemFault != null && safeSystemBitmap == null) {
+        PurpleFailsafeIcon(
+            size = size,
+            shape = shape,
+            contentDescription = app.label
+        )
         return
     }
 
@@ -449,12 +502,9 @@ fun AppIconGraphic(
                         .clip(shape)
                         .background(gradient)
                 ) {
-                    if (systemDrawable != null) {
-                        val bitmap = remember(systemDrawable) {
-                            systemDrawable.toBitmap(size.value.toInt() * 2, size.value.toInt() * 2).asImageBitmap()
-                        }
+                    if (safeSystemBitmap != null) {
                         Image(
-                            bitmap = bitmap,
+                            bitmap = safeSystemBitmap,
                             contentDescription = app.label,
                             modifier = Modifier.size(size * 0.68f)
                         )
@@ -496,12 +546,9 @@ fun AppIconGraphic(
                         .clip(shape)
                         .background(fallbackColor)
                 ) {
-                    if (systemDrawable != null) {
-                        val bitmap = remember(systemDrawable) {
-                            systemDrawable.toBitmap(size.value.toInt() * 2, size.value.toInt() * 2).asImageBitmap()
-                        }
+                    if (safeSystemBitmap != null) {
                         Image(
-                            bitmap = bitmap,
+                            bitmap = safeSystemBitmap,
                             contentDescription = app.label,
                             modifier = Modifier.size(size * 0.65f)
                         )

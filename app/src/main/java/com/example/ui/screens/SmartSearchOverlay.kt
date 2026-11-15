@@ -9,7 +9,9 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -60,6 +62,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
@@ -72,7 +76,6 @@ import com.example.model.AppCategory
 import com.example.model.AppItem
 import com.example.model.IconPackStyle
 import com.example.model.IconShape
-import com.example.model.IconSize
 import com.example.ui.components.AppIconGraphic
 import com.example.ui.components.getIconShape
 
@@ -103,9 +106,11 @@ fun SmartSearchOverlay(
         evaluateMathExpression(searchQuery)
     }
 
+    val visibleApps = remember(apps) { apps.filter { !it.isHidden } }
+
     // Filter apps
-    val filteredApps = remember(searchQuery, selectedCategory, apps) {
-        apps.filter { app ->
+    val filteredApps = remember(searchQuery, selectedCategory, visibleApps) {
+        visibleApps.filter { app ->
             val matchesCategory = selectedCategory == null || app.category == selectedCategory
             val matchesQuery = if (searchQuery.isBlank()) {
                 true
@@ -114,21 +119,34 @@ fun SmartSearchOverlay(
                         app.packageName.contains(searchQuery, ignoreCase = true) ||
                         app.category.title.contains(searchQuery, ignoreCase = true)
             }
-            matchesCategory && matchesQuery && !app.isHidden
+            matchesCategory && matchesQuery
         }
     }
 
-    Surface(
-        color = MaterialTheme.colorScheme.background,
+    val translucentBackdrop = Brush.verticalGradient(
+        colors = listOf(
+            MaterialTheme.colorScheme.background.copy(alpha = 0.76f),
+            MaterialTheme.colorScheme.surface.copy(alpha = 0.66f),
+            MaterialTheme.colorScheme.background.copy(alpha = 0.78f)
+        )
+    )
+
+    Box(
         modifier = Modifier
             .fillMaxSize()
-            .statusBarsPadding()
-            .navigationBarsPadding()
+            .background(translucentBackdrop)
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = {}
+            )
             .testTag("smart_search_overlay")
     ) {
         Column(
             modifier = Modifier
                 .fillMaxSize()
+                .statusBarsPadding()
+                .navigationBarsPadding()
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
             // Search Input Row
@@ -180,10 +198,10 @@ fun SmartSearchOverlay(
                     ),
                     shape = RoundedCornerShape(28.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.6f),
-                        unfocusedContainerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.4f),
+                        focusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.68f),
+                        unfocusedContainerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.52f),
                         focusedBorderColor = MaterialTheme.colorScheme.primary,
-                        unfocusedBorderColor = androidx.compose.ui.graphics.Color.Transparent
+                        unfocusedBorderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.30f)
                     ),
                     modifier = Modifier
                         .weight(1f)
@@ -208,8 +226,15 @@ fun SmartSearchOverlay(
                         },
                         label = { Text(cat.title, fontSize = 12.sp) },
                         colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = MaterialTheme.colorScheme.primary,
-                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary
+                            selectedContainerColor = MaterialTheme.colorScheme.primary.copy(alpha = 0.92f),
+                            selectedLabelColor = MaterialTheme.colorScheme.onPrimary,
+                            containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.48f),
+                            labelColor = MaterialTheme.colorScheme.onSurface
+                        ),
+                        border = FilterChipDefaults.filterChipBorder(
+                            enabled = true,
+                            selected = isSelected,
+                            borderColor = MaterialTheme.colorScheme.outline.copy(alpha = 0.25f)
                         )
                     )
                 }
@@ -225,7 +250,7 @@ fun SmartSearchOverlay(
                         .padding(vertical = 6.dp)
                         .testTag("search_calculator_card"),
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.primaryContainer
+                        containerColor = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.82f)
                     ),
                     shape = RoundedCornerShape(18.dp)
                 ) {
@@ -288,7 +313,7 @@ fun SmartSearchOverlay(
                             runCatching { context.startActivity(webIntent) }
                         },
                     colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f)
+                        containerColor = MaterialTheme.colorScheme.surface.copy(alpha = 0.56f)
                     ),
                     shape = RoundedCornerShape(16.dp)
                 ) {
@@ -321,7 +346,7 @@ fun SmartSearchOverlay(
                     .padding(top = 8.dp)
             ) {
                 if (filteredApps.isEmpty() && searchQuery.isNotBlank()) {
-                    item {
+                    item(contentType = "empty") {
                         Column(
                             horizontalAlignment = Alignment.CenterHorizontally,
                             modifier = Modifier
@@ -342,13 +367,19 @@ fun SmartSearchOverlay(
                         }
                     }
                 } else {
-                    items(filteredApps, key = { it.id }) { app ->
+                    items(filteredApps, key = { it.id }, contentType = { "search_app_row" }) { app ->
                         Row(
                             verticalAlignment = Alignment.CenterVertically,
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 4.dp)
                                 .clip(RoundedCornerShape(16.dp))
+                                .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.42f))
+                                .border(
+                                    width = 1.dp,
+                                    color = MaterialTheme.colorScheme.outline.copy(alpha = 0.16f),
+                                    shape = RoundedCornerShape(16.dp)
+                                )
                                 .clickable { onAppClick(app) }
                                 .padding(horizontal = 12.dp, vertical = 8.dp)
                                 .testTag("search_result_${app.packageName.replace('.', '_')}")

@@ -16,6 +16,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -39,6 +40,7 @@ fun AlphabetScrubber(
     }
     var columnHeightPx by remember { mutableStateOf(1f) }
     val view = LocalView.current
+    val hapticsEnabled by rememberUpdatedState(LocalLauncherHapticEnabled.current)
 
     Column(
         modifier = modifier
@@ -56,7 +58,9 @@ fun AlphabetScrubber(
                             .toInt()
                             .coerceIn(0, letters.lastIndex)
                         val char = letters[index]
-                        view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        if (hapticsEnabled) {
+                            view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        }
                         onLetterSelected(char)
                     },
                     onVerticalDrag = { change, _ ->
@@ -65,7 +69,9 @@ fun AlphabetScrubber(
                             .toInt()
                             .coerceIn(0, letters.lastIndex)
                         val char = letters[index]
-                        view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        if (hapticsEnabled) {
+                            view.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                        }
                         onLetterSelected(char)
                     }
                 )

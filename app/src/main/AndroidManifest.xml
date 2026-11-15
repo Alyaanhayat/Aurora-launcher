@@ -22,6 +22,7 @@
             android:clearTaskOnLaunch="true"
             android:stateNotNeeded="true"
             android:windowSoftInputMode="adjustResize"
+            android:configChanges="uiMode|orientation|screenSize|screenLayout|smallestScreenSize"
             android:theme="@style/Theme.MyApplication">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />

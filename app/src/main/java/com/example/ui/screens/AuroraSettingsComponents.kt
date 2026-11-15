@@ -94,6 +94,7 @@ import com.example.model.ThemeMode
 import com.example.ui.theme.AuroraBodyFontFamily
 import com.example.ui.theme.AuroraDisplayFontFamily
 import com.example.ui.theme.isLauncherDarkTheme
+import com.example.ui.theme.rememberWallpaperAccentColors
 import com.example.util.IconPackManager
 import com.example.util.ImportedIconPackState
 
@@ -154,19 +155,45 @@ internal fun rememberAuroraSettingsPalette(preferences: LauncherPreferences): Au
     val isDark = isLauncherDarkTheme(preferences.themeMode)
     val isAmoled = preferences.themeMode == ThemeMode.AMOLED_BLACK
     val dynamicPrimary = MaterialTheme.colorScheme.primary
-
-    val seedAccent = if (preferences.themeMode == ThemeMode.SYSTEM && Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
-        if (dynamicPrimary.luminance() > 0.55f) lerp(dynamicPrimary, Color.Black, 0.35f) else dynamicPrimary
+    val wallpaperAccents = if (preferences.dynamicWallpaperColors) {
+        rememberWallpaperAccentColors(preferences.wallpaperThemeIndex)
     } else {
-        when (preferences.colorPaletteSeed) {
-            ColorPaletteSeed.LAVENDER -> Color(0xFF631DEB)
-            ColorPaletteSeed.OCEAN_BLUE -> Color(0xFF1976D2)
-            ColorPaletteSeed.BOTANICAL_SAGE -> Color(0xFF2E7D32)
-            ColorPaletteSeed.SUNSET_AMBER -> Color(0xFFD84315)
-            ColorPaletteSeed.ROSE_BERRY -> Color(0xFFC2185B)
-            ColorPaletteSeed.MINIMAL_MONO -> Color(0xFF455A64)
+        null
+    }
+
+    val seedAccent = when {
+        preferences.dynamicWallpaperColors &&
+            preferences.themeMode == ThemeMode.SYSTEM &&
+            preferences.wallpaperThemeIndex == 0 &&
+            Build.VERSION.SDK_INT >= Build.VERSION_CODES.S -> {
+            if (dynamicPrimary.luminance() > 0.55f) lerp(dynamicPrimary, Color.Black, 0.35f) else dynamicPrimary
+        }
+        preferences.dynamicWallpaperColors && wallpaperAccents != null -> {
+            val raw = wallpaperAccents.first
+            when {
+                raw.luminance() > 0.55f -> lerp(raw, Color.Black, 0.35f)
+                raw.luminance() < 0.08f -> lerp(raw, Color.White, 0.24f)
+                else -> raw
+            }
+        }
+        else -> {
+            when (preferences.colorPaletteSeed) {
+                ColorPaletteSeed.LAVENDER -> Color(0xFF631DEB)
+                ColorPaletteSeed.OCEAN_BLUE -> Color(0xFF1976D2)
+                ColorPaletteSeed.BOTANICAL_SAGE -> Color(0xFF2E7D32)
+                ColorPaletteSeed.SUNSET_AMBER -> Color(0xFFD84315)
+                ColorPaletteSeed.ROSE_BERRY -> Color(0xFFC2185B)
+                ColorPaletteSeed.MINIMAL_MONO -> Color(0xFF455A64)
+            }
         }
     }
+
+    val useSignatureTwilight = (!preferences.dynamicWallpaperColors &&
+        preferences.themeMode == ThemeMode.MINIMAL_DARK &&
+        preferences.colorPaletteSeed == ColorPaletteSeed.LAVENDER) ||
+        (preferences.dynamicWallpaperColors &&
+            preferences.themeMode == ThemeMode.MINIMAL_DARK &&
+            preferences.wallpaperThemeIndex == 2)
 
     val target = when {
         !isDark -> {
@@ -209,7 +236,7 @@ internal fun rememberAuroraSettingsPalette(preferences: LauncherPreferences): Au
                 selectionRing = Color.White
             )
         }
-        preferences.themeMode == ThemeMode.MINIMAL_DARK && preferences.colorPaletteSeed == ColorPaletteSeed.LAVENDER -> {
+        useSignatureTwilight -> {
             // Signature Twilight Purple palette matching the mockups
             DefaultTwilightPalette
         }
@@ -380,11 +407,13 @@ internal fun Aurora3DPillButton(
     textBrush: Brush? = null,
     faceColor: Color? = null,
     lipColor: Color? = null,
+    textColor: Color? = null,
     testTagName: String? = null
 ) {
     val palette = LocalAuroraSettingsPalette.current
     val resolvedFace = faceColor ?: palette.pillFace
     val resolvedLip = lipColor ?: palette.pillLip
+    val resolvedTextColor = textColor ?: palette.onPill
 
     val baseMod = modifier
         .fillMaxWidth()
@@ -420,7 +449,7 @@ internal fun Aurora3DPillButton(
                     )
                 } else {
                     TextStyle(
-                        color = palette.onPill,
+                        color = resolvedTextColor,
                         fontFamily = AuroraDisplayFontFamily,
                         fontSize = fontSize
                     )
